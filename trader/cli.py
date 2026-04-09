@@ -21,20 +21,23 @@ def _zeige_menue(s: Settings) -> None:
     print("=" * 50)
     print()
     print(f"  [1] Ausführung      : {s.execution}  (paper / live)")
-    print(f"  [2] Modus           : {s.mode}  (manual / auto)")
-    print(f"  [3] Kapital (paper) : {s.account_equity:.2f} USDT")
-    print(f"  [4] Risiko/Trade    : {s.risk_per_trade * 100:.2f} %  (max 1%)")
-    print(f"  [5] Min. CRV        : {s.min_rr:.1f}")
-    print(f"  [6] Timeframe       : {s.timeframe_minutes} min")
-    print(f"  [7] Schritte        : {s.loop_steps}")
-    print(f"  [8] Interval        : {s.loop_interval_sec} Sek.")
-    print(f"  [9] Session-Ende    : {s.session_end_hour_utc}:00 UTC")
+    feed_info = "BingX Livedaten (kein Geld)" if s.live_feed else "Zufallsdaten (Simulation)"
+    print(f"  [2] Datenquelle     : {feed_info}")
+    print(f"  [3] Modus           : {s.mode}  (manual / auto)")
+    print(f"  [4] Kapital (paper) : {s.account_equity:.2f} USDT")
+    print(f"  [5] Risiko/Trade    : {s.risk_per_trade * 100:.2f} %  (max 1%)")
+    print(f"  [6] Min. CRV        : {s.min_rr:.1f}")
+    print(f"  [7] Timeframe       : {s.timeframe_minutes} min")
+    print(f"  [8] Schritte        : {s.loop_steps}")
+    print(f"  [9] Interval        : {s.loop_interval_sec} Sek.")
+    print(f"  [0] Session-Ende    : {s.session_end_hour_utc}:00 UTC")
     print()
-    # API-Keys maskiert anzeigen
+    # API-Keys maskiert anzeigen (nur für Live-Modus nötig)
     key_anzeige = "*** (gesetzt)" if s.bingx_api_key else "(nicht gesetzt)"
     secret_anzeige = "*** (gesetzt)" if s.bingx_api_secret else "(nicht gesetzt)"
     print(f"  [A] API Key         : {key_anzeige}")
     print(f"  [B] API Secret      : {secret_anzeige}")
+    print(f"  [T] Signal-Timeout  : {s.manual_timeout_sec} Sek.")
     print()
     print("  [S] Start")
     print("  [Q] Beenden")
@@ -67,19 +70,34 @@ def _interaktives_menue() -> Settings:
                 input("  Ungültig. Enter drücken...")
 
         elif auswahl == "2":
+            # Zwischen Zufallsdaten und echten BingX-Livedaten wechseln
+            aktuell = "live" if s.live_feed else "mock"
+            wert = _frage("Datenquelle (live/mock)", aktuell)
+            if wert == "live":
+                s.live_feed = True
+                # Bei Livedaten sinnvolles Interval setzen (30 Sek. = wenig API-Last)
+                if s.loop_interval_sec < 10:
+                    s.loop_interval_sec = 30
+                input("  Livedaten aktiv. Interval auf 30s gesetzt. Enter drücken...")
+            elif wert == "mock":
+                s.live_feed = False
+            else:
+                input("  Ungültig (live oder mock). Enter drücken...")
+
+        elif auswahl == "3":
             wert = _frage("Modus (manual/auto)", s.mode)
             if wert in ("manual", "auto"):
                 s.mode = wert
             else:
                 input("  Ungültig. Enter drücken...")
 
-        elif auswahl == "3":
+        elif auswahl == "4":
             try:
                 s.account_equity = float(_frage("Kapital in USDT", str(s.account_equity)))
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "4":
+        elif auswahl == "5":
             try:
                 wert = float(_frage("Risiko in % (max 1.0)", str(s.risk_per_trade * 100)))
                 # Sicherheitsgrenze: niemals mehr als 1% riskieren
@@ -87,13 +105,13 @@ def _interaktives_menue() -> Settings:
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "5":
+        elif auswahl == "6":
             try:
                 s.min_rr = float(_frage("Min. CRV", str(s.min_rr)))
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "6":
+        elif auswahl == "7":
             try:
                 wert = int(_frage("Timeframe in Minuten (min 5)", str(s.timeframe_minutes)))
                 if wert >= 5:
@@ -103,19 +121,19 @@ def _interaktives_menue() -> Settings:
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "7":
+        elif auswahl == "8":
             try:
                 s.loop_steps = int(_frage("Anzahl Schritte", str(s.loop_steps)))
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "8":
+        elif auswahl == "9":
             try:
                 s.loop_interval_sec = int(_frage("Interval in Sekunden", str(s.loop_interval_sec)))
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "9":
+        elif auswahl == "0":
             try:
                 s.session_end_hour_utc = int(_frage("Session-Ende UTC-Stunde (0-23)", str(s.session_end_hour_utc)))
             except ValueError:
@@ -131,6 +149,12 @@ def _interaktives_menue() -> Settings:
             secret = getpass.getpass("  API Secret (Eingabe versteckt): ")
             if secret:
                 s.bingx_api_secret = secret
+
+        elif auswahl == "t":
+            try:
+                s.manual_timeout_sec = int(_frage("Timeout in Sekunden", str(s.manual_timeout_sec)))
+            except ValueError:
+                input("  Ungültige Zahl. Enter drücken...")
 
         elif auswahl == "s":
             # Live-Modus ohne Keys → warnen

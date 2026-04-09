@@ -25,7 +25,8 @@ class Settings:
     manual_timeout_sec: int = 30
     logs_dir: str = "logs"
     loop_steps: int = 200
-    loop_interval_sec: int = 2
+    loop_interval_sec: int = 30
+    live_feed: bool = False
     session_end_hour_utc: int = 23
     bingx_api_key: str | None = None
     bingx_api_secret: str | None = None

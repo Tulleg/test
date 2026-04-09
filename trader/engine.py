@@ -12,6 +12,7 @@ from trader.bingx_exchange import BingXExecution
 from trader.bingx_feed import BingXDataFeed
 from trader.config import Settings
 from trader.datafeed import MockDataFeed
+from trader.display import StatusDisplay
 from trader.exchange import PaperExchange
 from trader.logging_utils import TradeLogger
 from trader.models import Candle, Signal, Trade
@@ -40,6 +41,11 @@ class TradingEngine:
         self.bingx_exec: BingXExecution | None = None
         self._exchange: Any = None
         self._last_candle: Candle | None = None
+        # Display und Schritt-Tracking
+        self.display = StatusDisplay()
+        self._status_msg = "Warte auf Signal..."
+        self._current_step = 0
+        self._total_steps = 0
 
         if settings.execution == "live":
             key, secret = settings.bingx_api_key, settings.bingx_api_secret
@@ -52,7 +58,12 @@ class TradingEngine:
             self.candles = self.datafeed.warmup(200)
             self.settings.account_equity = self.bingx_exec.fetch_equity_usdt()
         else:
-            self.datafeed = MockDataFeed()
+            if settings.live_feed:
+                # Echter Marktdaten-Feed, aber Orders werden nur simuliert (kein echtes Geld)
+                self.datafeed = BingXDataFeed(settings.ccxt_symbol, settings.timeframe_minutes)
+                self.candles = self.datafeed.warmup(200)
+            else:
+                self.datafeed = MockDataFeed()
             self._exchange = PaperExchange()
 
     def _refresh_equity_live(self) -> None:
@@ -62,20 +73,50 @@ class TradingEngine:
             except Exception as exc:
                 self.logger.log_event({"decision": "equity_fetch_error", "error": str(exc)})
 
-    def _manual_confirm(self, signal: Signal, risk: RiskCheck) -> bool:
-        print("WARNING: Neues Signal erkannt (manual bestaetigen).")
-        print(
-            f"Signal {signal.setup_name} {signal.direction.upper()} "
-            f"entry={signal.entry:.2f} stop={signal.stop:.2f} target={signal.target:.2f} "
-            f"CRV={risk.rr:.2f} size={risk.position_size:.4f} risk={risk.risk_percent:.2f}% "
-            f"reason={signal.reason}"
+    def _redraw(self) -> None:
+        """Zeichnet die Status-Box neu."""
+        self.display.draw(
+            symbol=self.settings.symbol,
+            execution=self.settings.execution,
+            mode=self.settings.mode,
+            equity=self.settings.account_equity,
+            day_pnl=self.realized_pnl_today,
+            total_trades=self.total_trades,
+            wins=self.wins,
+            losses=self.losses,
+            open_trade=self.open_trade,
+            last_candle=self._last_candle,
+            current_step=self._current_step,
+            total_steps=self._total_steps,
+            status_msg=self._status_msg,
         )
-        print(f"Bitte eingeben: confirm oder reject (timeout {self.settings.manual_timeout_sec}s): ", end="", flush=True)
+
+    def _manual_confirm(self, signal: Signal, risk: RiskCheck) -> bool:
+        self._status_msg = "Bestätigung erforderlich"
+        self._redraw()
+        # Signal-Details klar unterhalb der Box ausgeben
+        pfeil = "▲ LONG" if signal.direction == "long" else "▼ SHORT"
+        print()
+        print("  ┌─── NEUES SIGNAL ──────────────────────────────────┐")
+        print(f"  │  {pfeil}  {signal.setup_name} ({signal.regime})")
+        print(f"  │  Entry:  {signal.entry:.2f}")
+        print(f"  │  Stop:   {signal.stop:.2f}")
+        print(f"  │  Target: {signal.target:.2f}")
+        print(f"  │  CRV:    {risk.rr:.2f}   Risiko: {risk.risk_percent:.2f}%   Größe: {risk.position_size:.4f}")
+        print(f"  │  Grund:  {signal.reason}")
+        print("  └───────────────────────────────────────────────────┘")
+        print(f"\n  → confirm / reject  (Timeout: {self.settings.manual_timeout_sec}s): ", end="", flush=True)
         ready, _, _ = select.select([sys.stdin], [], [], self.settings.manual_timeout_sec)
         if not ready:
-            print("timeout -> rejected")
+            print("timeout")
+            self.display.add_event(f"Signal Timeout: {signal.direction.upper()} @ {signal.entry:.0f}")
+            self._status_msg = "Timeout – Signal abgelehnt"
             return False
         answer = sys.stdin.readline().strip().lower()
+        if answer == "confirm":
+            self.display.add_event(f"Signal bestätigt: {signal.direction.upper()} @ {signal.entry:.0f}")
+        else:
+            self.display.add_event(f"Signal abgelehnt: {signal.direction.upper()} @ {signal.entry:.0f}")
         return answer == "confirm"
 
     def _session_end(self) -> bool:
@@ -159,15 +200,13 @@ class TradingEngine:
         self.logger.write_daily_summary(
             f"trade_closed order={trade.order_id} pnl={pnl:.2f} day_pnl={self.realized_pnl_today:.2f}"
         )
-        print(f"Position geschlossen: {exit_reason}, pnl={pnl:.2f}, day_pnl={self.realized_pnl_today:.2f}")
-        self.open_trade = None
-
-    def _print_status(self) -> None:
-        print(
-            f"execution={self.settings.execution} mode={self.settings.mode} equity={self.settings.account_equity:.2f} "
-            f"day_pnl={self.realized_pnl_today:.2f} open={'yes' if self.open_trade else 'no'} "
-            f"wins={self.wins} losses={self.losses} rej={self.rejections}"
+        vorzeichen = "+" if pnl >= 0 else ""
+        self.display.add_event(
+            f"Geschlossen: {exit_reason}  PnL: {vorzeichen}{pnl:.2f} $  "
+            f"Tag: {vorzeichen}{self.realized_pnl_today:.2f} $"
         )
+        self._status_msg = "Warte auf Signal..."
+        self.open_trade = None
 
     def _trim_candles(self) -> None:
         max_len = 500
@@ -202,24 +241,29 @@ class TradingEngine:
             self._sync_live_position()
 
         if self.open_trade:
+            self._status_msg = "Position offen"
             return
 
         if self.settings.timeframe_minutes < 5:
             self.rejections += 1
             self.rejection_counts["timeframe_below_5m"] += 1
             self.logger.log_event({"decision": "rejected", "rejectionReason": "timeframe_below_5m"})
+            self._status_msg = "Abgelehnt: Timeframe unter 5 min"
             return
 
         if self._session_end():
             self.logger.log_event({"decision": "skipped", "reason": "session_end"})
+            self._status_msg = "Session beendet – kein Trading"
             return
 
         if self._risk_guard():
             self.logger.log_event({"decision": "blocked", "reason": "daily_loss_limit_reached"})
+            self._status_msg = "Tagesverlust-Limit erreicht"
             return
 
         strategy_result = self.strategy.evaluate(self.candles)
         if not strategy_result.signal:
+            self._status_msg = f"Kein Signal ({strategy_result.rejection_reason})"
             self.logger.log_event({"decision": "no_signal", "reason": strategy_result.rejection_reason})
             return
 
@@ -249,7 +293,8 @@ class TradingEngine:
                     "rewardRiskRatio": risk.rr,
                 }
             )
-            print(f"WARNUNG: Signal abgelehnt ({risk.reason})")
+            self.display.add_event(f"Signal abgelehnt: {risk.reason}")
+            self._status_msg = f"Signal abgelehnt: {risk.reason}"
             return
 
         # Spread-Check: Nur im Live-Modus prüfen ob Bid-Ask-Spread akzeptabel ist
@@ -265,7 +310,8 @@ class TradingEngine:
                         "max_spread_bps": self.settings.max_spread_bps,
                     }
                 )
-                print(f"WARNUNG: Signal abgelehnt (Spread zu groß, max={self.settings.max_spread_bps} bps)")
+                self.display.add_event(f"Signal abgelehnt: Spread zu groß (max {self.settings.max_spread_bps} bps)")
+                self._status_msg = "Signal abgelehnt: Spread zu groß"
                 return
 
         allowed = True
@@ -299,17 +345,18 @@ class TradingEngine:
         )
         self.logger.log_trade(trade)
         self.open_trade = trade
-        print(
-            f"Trade eroefnet: {trade.direction} {trade.setup_name} entry={trade.entry_price:.2f} "
-            f"sl={trade.stop_price:.2f} tp={trade.take_profit_price:.2f} rr={trade.reward_risk_ratio:.2f}"
+        self.display.add_event(
+            f"Trade eröffnet: {trade.direction.upper()} @ {trade.entry_price:.0f}  "
+            f"SL: {trade.stop_price:.0f}  TP: {trade.take_profit_price:.0f}"
         )
+        self._status_msg = "Position offen"
 
     def run(self, steps: int) -> None:
-        print(f"Start TradingEngine (execution={self.settings.execution}) ...")
+        self._total_steps = steps
         for i in range(steps):
+            self._current_step = i + 1
             self.step()
-            if i % 5 == 0:
-                self._print_status()
+            self._redraw()
             time.sleep(self.settings.loop_interval_sec)
 
         winrate = (self.wins / self.total_trades * 100.0) if self.total_trades else 0.0
@@ -324,4 +371,4 @@ class TradingEngine:
             f"max_drawdown={self.max_drawdown:.2f} "
             f"rejections={self.rejections} [{rej_detail}]"
         )
-        print("Run beendet.")
+        print("\nRun beendet.")
