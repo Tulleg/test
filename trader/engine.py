@@ -74,7 +74,9 @@ class TradingEngine:
                 self.logger.log_event({"decision": "equity_fetch_error", "error": str(exc)})
 
     def _redraw(self) -> None:
-        """Zeichnet die Status-Box neu."""
+        """Zeichnet die Status-Box neu. Im GUI-Modus wird nichts ausgegeben."""
+        if getattr(self, "_gui_state", None) is not None:
+            return  # GUI aktualisiert sich selbst via Polling
         laufzeit = datetime.now(UTC) - self._start_time
         self.display.draw(
             symbol=self.settings.symbol,
@@ -95,7 +97,36 @@ class TradingEngine:
     def _manual_confirm(self, signal: Signal, risk: RiskCheck) -> bool:
         self._status_msg = "Bestätigung erforderlich"
         self._redraw()
-        # Signal-Details klar unterhalb der Box ausgeben
+
+        # GUI-Modus: Signal in GUIState schreiben, auf Antwort aus der GUI warten
+        gui_state = getattr(self, "_gui_state", None)
+        if gui_state is not None:
+            import queue as _queue
+            with gui_state.lock:
+                gui_state.pending_signal = {
+                    "direction": signal.direction,
+                    "entry": signal.entry,
+                    "stop": signal.stop,
+                    "target": signal.target,
+                    "setup": signal.setup_name,
+                    "rr": risk.rr,
+                }
+            try:
+                # Blockiert den Engine-Thread – nicht den GUI-Thread!
+                answer = gui_state.signal_response.get(timeout=self.settings.manual_timeout_sec)
+            except _queue.Empty:
+                answer = "reject"
+            finally:
+                with gui_state.lock:
+                    gui_state.pending_signal = None
+            if answer == "confirm":
+                self.display.add_event(f"Signal bestätigt: {signal.direction.upper()} @ {signal.entry:.0f}")
+            else:
+                self.display.add_event(f"Signal Timeout/Ablehnung: {signal.direction.upper()} @ {signal.entry:.0f}")
+                self._status_msg = "Signal abgelehnt"
+            return answer == "confirm"
+
+        # CLI-Modus: interaktive Eingabe über Terminal (unveränderter Code)
         pfeil = "▲ LONG" if signal.direction == "long" else "▼ SHORT"
         print()
         print("  ┌─── NEUES SIGNAL ──────────────────────────────────┐")
@@ -399,6 +430,59 @@ class TradingEngine:
             f"max_drawdown={self.max_drawdown:.2f} "
             f"rejections={self.rejections} [{rej_detail}]"
         )
+
+    def _push_state_to_gui(self, state: Any) -> None:
+        """Schreibt den aktuellen Engine-Zustand thread-sicher in den GUIState."""
+        with state.lock:
+            state.candles = list(self.candles)
+            state.open_trade = self.open_trade
+            state.equity = self.settings.account_equity
+            state.day_pnl = self.realized_pnl_today
+            state.wins = self.wins
+            state.losses = self.losses
+            state.total_trades = self.total_trades
+            state.status_msg = self._status_msg
+            state.events = list(self.display.events)
+
+    def run_gui_mode(self, state: Any) -> None:
+        """Startet die Engine im GUI-Modus (läuft in einem Background-Thread).
+
+        Unterschiede zum CLI-Modus (run()):
+        - Kein Terminal-Rendering (_redraw gibt sofort zurück)
+        - Kommunikation über GUIState statt stdin/stdout
+        - Wartet mit time.sleep statt select.select auf stdin
+        """
+        self._start_time = datetime.now(UTC)
+        self._gui_state = state
+
+        # Initialen Zustand sofort pushen (damit die GUI beim Start schon Daten hat)
+        self._push_state_to_gui(state)
+
+        try:
+            while True:
+                # Kommandos der GUI verarbeiten (non-blocking)
+                try:
+                    import queue as _queue
+                    cmd = state.command_queue.get_nowait()
+                    if cmd == "stop_engine":
+                        break
+                    elif cmd == "close_trade":
+                        self._manuell_schliessen()
+                except _queue.Empty:
+                    pass
+
+                self.step()
+                self._push_state_to_gui(state)
+                time.sleep(self.settings.loop_interval_sec)
+
+        except Exception as exc:
+            self.logger.log_event({"decision": "engine_error", "error": str(exc)})
+        finally:
+            self._schreibe_summary()
+            with state.lock:
+                state.running = False
+                state.status_msg = "Engine gestoppt"
+            self._gui_state = None
 
     def run(self) -> None:
         self._start_time = datetime.now(UTC)
