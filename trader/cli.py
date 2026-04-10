@@ -28,9 +28,8 @@ def _zeige_menue(s: Settings) -> None:
     print(f"  [5] Risiko/Trade    : {s.risk_per_trade * 100:.2f} %  (max 1%)")
     print(f"  [6] Min. CRV        : {s.min_rr:.1f}")
     print(f"  [7] Timeframe       : {s.timeframe_minutes} min")
-    print(f"  [8] Schritte        : {s.loop_steps}")
-    print(f"  [9] Interval        : {s.loop_interval_sec} Sek.")
-    print(f"  [0] Session-Ende    : {s.session_end_hour_utc}:00 UTC")
+    print(f"  [8] Interval        : {s.loop_interval_sec} Sek.")
+    print(f"  [9] Session-Ende    : {s.session_end_hour_utc}:00 UTC")
     print()
     # API-Keys maskiert anzeigen (nur für Live-Modus nötig)
     key_anzeige = "*** (gesetzt)" if s.bingx_api_key else "(nicht gesetzt)"
@@ -123,17 +122,11 @@ def _interaktives_menue() -> Settings:
 
         elif auswahl == "8":
             try:
-                s.loop_steps = int(_frage("Anzahl Schritte", str(s.loop_steps)))
-            except ValueError:
-                input("  Ungültige Zahl. Enter drücken...")
-
-        elif auswahl == "9":
-            try:
                 s.loop_interval_sec = int(_frage("Interval in Sekunden", str(s.loop_interval_sec)))
             except ValueError:
                 input("  Ungültige Zahl. Enter drücken...")
 
-        elif auswahl == "0":
+        elif auswahl == "9":
             try:
                 s.session_end_hour_utc = int(_frage("Session-Ende UTC-Stunde (0-23)", str(s.session_end_hour_utc)))
             except ValueError:
@@ -174,13 +167,11 @@ def run() -> None:
     # Wenn keine Argumente übergeben → interaktives Menü anzeigen
     if len(sys.argv) == 1:
         settings = _interaktives_menue()
-        steps = settings.loop_steps
     else:
-        # Argumente übergeben → wie bisher per CLI starten
+        # Argumente übergeben → direkt per CLI starten
         parser = argparse.ArgumentParser(description="BingX BTC Perpetual terminal trader (paper or live).")
         parser.add_argument("--mode", choices=["manual", "auto"], default="manual")
         parser.add_argument("--execution", choices=["paper", "live"], default=None)
-        parser.add_argument("--steps", type=int, default=200)
         parser.add_argument("--timeframe", type=int, default=5)
         parser.add_argument("--equity", type=float, default=10000.0)
         parser.add_argument("--risk", type=float, default=0.01)
@@ -201,7 +192,6 @@ def run() -> None:
         settings.session_end_hour_utc = args.session_end_hour_utc
         if args.ccxt_symbol:
             settings.ccxt_symbol = args.ccxt_symbol
-        steps = args.steps
 
     engine = TradingEngine(settings=settings)
-    engine.run(steps=steps)
+    engine.run()

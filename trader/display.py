@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -77,8 +77,8 @@ class StatusDisplay:
         losses: int,
         open_trade: Trade | None,
         last_candle: Candle | None,
-        current_step: int,
-        total_steps: int,
+        candle_count: int,
+        laufzeit: timedelta,
         status_msg: str,
     ) -> None:
         """Löscht das Terminal und zeichnet die Status-Box neu."""
@@ -98,6 +98,8 @@ class StatusDisplay:
         kapital_str = f"Kapital: {FETT}{equity:,.2f} ${RESET}"
         pnl_str = f"Tag PnL: {_pnl_farbe(day_pnl)}"
         zeilen.append(_zeile(f"{kapital_str}    {pnl_str}"))
+        kurs_str = f"{FETT}{last_candle.close:,.2f} ${RESET}" if last_candle else f"{GRAU}--{RESET}"
+        zeilen.append(_zeile(f"Kurs:    {kurs_str}"))
 
         trades_str = (
             f"Trades: {total_trades}  ·  "
@@ -145,8 +147,18 @@ class StatusDisplay:
         zeilen.append(_trennlinie())
 
         # ── Statuszeile ──────────────────────────────────────────
-        fortschritt = f"Schritt {current_step} / {total_steps}"
-        zeilen.append(_zeile(f"{GRAU}{fortschritt}{RESET}  ·  {status_msg}"))
+        gesamt_sek = int(laufzeit.total_seconds())
+        laufzeit_str = f"{gesamt_sek // 3600:02d}:{(gesamt_sek % 3600) // 60:02d}:{gesamt_sek % 60:02d}"
+        info = f"{GRAU}Laufzeit: {laufzeit_str}  ·  Kerzen: {candle_count}{RESET}"
+        zeilen.append(_zeile(f"{info}  ·  {status_msg}"))
+        zeilen.append(_trennlinie())
+
+        # ── Tastenbefehle ─────────────────────────────────────────
+        befehle = []
+        if open_trade:
+            befehle.append(f"{GELB}[C]{RESET} Schließen")
+        befehle.append(f"{GRAU}[Q]{RESET} Beenden")
+        zeilen.append(_zeile("    ".join(befehle)))
         zeilen.append(_fusszeile())
 
         print("\n".join(zeilen))

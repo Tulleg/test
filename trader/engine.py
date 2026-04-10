@@ -41,11 +41,11 @@ class TradingEngine:
         self.bingx_exec: BingXExecution | None = None
         self._exchange: Any = None
         self._last_candle: Candle | None = None
-        # Display und Schritt-Tracking
+        # Display und Laufzeit-Tracking
         self.display = StatusDisplay()
         self._status_msg = "Warte auf Signal..."
-        self._current_step = 0
-        self._total_steps = 0
+        self._candle_count = 0
+        self._start_time = datetime.now(UTC)
 
         if settings.execution == "live":
             key, secret = settings.bingx_api_key, settings.bingx_api_secret
@@ -75,6 +75,7 @@ class TradingEngine:
 
     def _redraw(self) -> None:
         """Zeichnet die Status-Box neu."""
+        laufzeit = datetime.now(UTC) - self._start_time
         self.display.draw(
             symbol=self.settings.symbol,
             execution=self.settings.execution,
@@ -86,8 +87,8 @@ class TradingEngine:
             losses=self.losses,
             open_trade=self.open_trade,
             last_candle=self._last_candle,
-            current_step=self._current_step,
-            total_steps=self._total_steps,
+            candle_count=self._candle_count,
+            laufzeit=laufzeit,
             status_msg=self._status_msg,
         )
 
@@ -229,9 +230,14 @@ class TradingEngine:
         candle = self.datafeed.next_candle(self.settings.timeframe_minutes)
         if candle is None:
             self._sync_live_position()
+            if self.open_trade:
+                self._status_msg = "Position offen – warte auf neue Kerze"
+            else:
+                self._status_msg = "Warte auf neue Kerze..."
             return
 
         self._last_candle = candle
+        self._candle_count += 1
         self.candles.append(candle)
         self._trim_candles()
 
@@ -351,18 +357,40 @@ class TradingEngine:
         )
         self._status_msg = "Position offen"
 
-    def run(self, steps: int) -> None:
-        self._total_steps = steps
-        for i in range(steps):
-            self._current_step = i + 1
-            self.step()
-            self._redraw()
-            time.sleep(self.settings.loop_interval_sec)
+    def _manuell_schliessen(self) -> None:
+        """Schließt die offene Position sofort zum letzten bekannten Preis."""
+        if not self.open_trade:
+            return
+        if self.settings.execution == "live" and self.bingx_exec:
+            self._session_flatten_live()
+        else:
+            exit_px = self._last_candle.close if self._last_candle else self.open_trade.entry_price
+            pnl = self._pnl_at_exit(self.open_trade, exit_px)
+            self._close_trade(self.open_trade, pnl, "manual_close")
 
+    def _warte_mit_anzeige(self, sekunden: int) -> str | None:
+        """Wartet N Sekunden, zeichnet Display jede Sekunde neu und prüft auf Tastaturbefehle.
+        Gibt 'q' zurück wenn der Nutzer beenden will, sonst None."""
+        for _ in range(max(1, sekunden)):
+            self._redraw()
+            # Non-blocking: 1 Sekunde auf Eingabe warten
+            bereit, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if bereit:
+                zeile = sys.stdin.readline().strip().lower()
+                if zeile == "c":
+                    if self.open_trade:
+                        self._manuell_schliessen()
+                        self.display.add_event("Position manuell geschlossen")
+                    else:
+                        self.display.add_event("Keine offene Position zum Schließen")
+                elif zeile == "q":
+                    return "q"
+        return None
+
+    def _schreibe_summary(self) -> None:
         winrate = (self.wins / self.total_trades * 100.0) if self.total_trades else 0.0
         profit_factor = (self.gross_profit / self.gross_loss) if self.gross_loss > 0 else float("inf")
         expectancy = (self.realized_pnl_today / self.total_trades) if self.total_trades else 0.0
-        # Ablehnungen nach Grund als lesbarer String (z.B. "rr_below_min=3 manual_reject_or_timeout=1")
         rej_detail = " ".join(f"{k}={v}" for k, v in sorted(self.rejection_counts.items()))
         self.logger.write_daily_summary(
             f"summary trades={self.total_trades} wins={self.wins} losses={self.losses} "
@@ -371,4 +399,18 @@ class TradingEngine:
             f"max_drawdown={self.max_drawdown:.2f} "
             f"rejections={self.rejections} [{rej_detail}]"
         )
-        print("\nRun beendet.")
+
+    def run(self) -> None:
+        self._start_time = datetime.now(UTC)
+        try:
+            while True:
+                self.step()
+                cmd = self._warte_mit_anzeige(self.settings.loop_interval_sec)
+                if cmd == "q":
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Summary immer schreiben, egal wie die App beendet wird
+            self._schreibe_summary()
+            print("\nRun beendet.")
