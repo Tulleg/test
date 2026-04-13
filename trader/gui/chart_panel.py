@@ -48,9 +48,11 @@ class ChartPanel(tk.Frame):
         self._last_candle_count = 0
 
         # Matplotlib Figure in Tkinter einbetten
+        # Zwei separate Subplots: oben Kerzen (75%), unten Volumen (25%)
         self._fig = matplotlib.figure.Figure(figsize=(10, 6), dpi=100, facecolor="#1e1e1e")
-        self._ax = self._fig.add_subplot(111)
-        self._ax_vol = self._ax.twinx()  # Volumen auf zweiter Y-Achse
+        gs = self._fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.0)
+        self._ax = self._fig.add_subplot(gs[0])
+        self._ax_vol = self._fig.add_subplot(gs[1], sharex=self._ax)
 
         self._canvas = FigureCanvasTkAgg(self._fig, master=self)
         self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
