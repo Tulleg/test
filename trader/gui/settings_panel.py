@@ -1,156 +1,184 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
 
 from trader.config import Settings
-
-BG = "#1e1e1e"
-BG_ENTRY = "#2a2a2a"
-FG = "#cccccc"
-FG_DIM = "#888888"
+from trader.gui.theme import (
+    BORDER,
+    CARD_PAD,
+    FONT_H2,
+    SURFACE,
+    SURFACE_ALT,
+    TEXT,
+    TEXT_MUTED,
+    TEXT_SOFT,
+    set_entry_style,
+    set_radio_style,
+    style_card,
+)
 
 
 class SettingsPanel(tk.Frame):
-    """Zeigt alle Konfigurationsparameter als editierbare Eingabefelder.
-
-    Gesperrte Felder (grau) können nicht verändert werden solange die Engine läuft.
-    """
+    """Zeigt die gleichen Kern-Einstellungen wie das CLI-Menü."""
 
     def __init__(self, parent: tk.Widget, settings: Settings) -> None:
-        super().__init__(parent, bg=BG, padx=8, pady=8)
+        super().__init__(parent, bg=parent.cget("bg"))
 
-        tk.Label(self, text="Einstellungen", bg=BG, fg=FG,
-                 font=("monospace", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        card = tk.Frame(self, bg=SURFACE, padx=CARD_PAD, pady=CARD_PAD)
+        style_card(card)
+        card.pack(fill=tk.X)
 
-        form = tk.Frame(self, bg=BG)
+        tk.Label(card, text="Einstellungen", bg=SURFACE, fg=TEXT, font=FONT_H2).pack(anchor="w")
+        tk.Label(
+            card,
+            text="Einspaltig aufgebaut, damit in der Sidebar nichts mehr überlappt.",
+            bg=SURFACE,
+            fg=TEXT_MUTED,
+            font=("TkDefaultFont", 9),
+        ).pack(anchor="w", pady=(3, 14))
+
+        form = tk.Frame(card, bg=SURFACE)
         form.pack(fill=tk.X)
 
-        # ── Variablen ────────────────────────────────────────────
         self._execution_var = tk.StringVar(value=settings.execution)
+        self._source_var = tk.StringVar(value="live" if settings.live_feed else "mock")
         self._mode_var = tk.StringVar(value=settings.mode)
-        self._symbol_var = tk.StringVar(value=settings.ccxt_symbol)
-        self._timeframe_var = tk.IntVar(value=settings.timeframe_minutes)
+        self._equity_var = tk.DoubleVar(value=settings.account_equity)
         self._risk_var = tk.DoubleVar(value=round(settings.risk_per_trade * 100, 2))
         self._minrr_var = tk.DoubleVar(value=settings.min_rr)
-        self._equity_var = tk.DoubleVar(value=settings.account_equity)
+        self._timeframe_var = tk.IntVar(value=settings.timeframe_minutes)
         self._interval_var = tk.IntVar(value=settings.loop_interval_sec)
         self._session_end_var = tk.IntVar(value=settings.session_end_hour_utc)
-        self._livefeed_var = tk.BooleanVar(value=settings.live_feed)
-        self._daily_loss_var = tk.DoubleVar(value=round(settings.daily_loss_limit_pct * 100, 1))
+        self._timeout_var = tk.IntVar(value=settings.manual_timeout_sec)
         self._apikey_var = tk.StringVar(value=settings.bingx_api_key or "")
         self._apisecret_var = tk.StringVar(value=settings.bingx_api_secret or "")
+        self._daily_loss_var = tk.DoubleVar(value=round(settings.daily_loss_limit_pct * 100, 1))
 
-        # Alle editierbaren Widgets für späteres Sperren
         self._editierbar: list[tk.Widget] = []
+        row = 0
 
-        def zeile(label: str, widget: tk.Widget, einheit: str = "") -> None:
-            """Erstellt eine beschriftete Eingabezeile im Formular."""
-            rahmen = tk.Frame(form, bg=BG)
-            rahmen.pack(fill=tk.X, pady=1)
-            tk.Label(rahmen, text=label, bg=BG, fg=FG_DIM,
-                     font=("monospace", 8), width=18, anchor="w").pack(side=tk.LEFT)
-            widget.pack(side=tk.LEFT, padx=(2, 0))
-            if einheit:
-                tk.Label(rahmen, text=einheit, bg=BG, fg=FG_DIM,
-                         font=("monospace", 8)).pack(side=tk.LEFT, padx=(3, 0))
+        def add_container(label: str, *, hint: str | None = None) -> tk.Frame:
+            nonlocal row
+            container = tk.Frame(form, bg=SURFACE)
+            container.pack(fill=tk.X, pady=(0, 10))
+            tk.Label(container, text=label, bg=SURFACE, fg=TEXT_MUTED, font=("TkDefaultFont", 9)).pack(anchor="w", pady=(0, 4))
+            if hint:
+                tk.Label(container, text=hint, bg=SURFACE, fg=TEXT_SOFT, font=("TkDefaultFont", 8)).pack(anchor="w", pady=(4, 0))
+            row += 1
+            return container
+
+        def add_input(label: str, variable: tk.Variable, factory, *, hint: str | None = None) -> None:
+            container = add_container(label, hint=hint)
+            widget = factory(container, variable)
+            widget.pack(fill=tk.X)
             self._editierbar.append(widget)
 
-        # ── Felder ───────────────────────────────────────────────
-        ex_box = ttk.Combobox(form, textvariable=self._execution_var,
-                              values=["paper", "live"], width=10, state="readonly")
-        zeile("Execution:", ex_box)
+        def add_radio_group(label: str, variable: tk.StringVar, options: list[tuple[str, str]], *, hint: str | None = None) -> None:
+            container = add_container(label, hint=hint)
+            group = tk.Frame(container, bg=SURFACE_ALT, padx=10, pady=8)
+            style_card(group, background=SURFACE_ALT, border=BORDER)
+            group.pack(fill=tk.X)
+            for option_row, (text, value) in enumerate(options):
+                radio = tk.Radiobutton(group, text=text, variable=variable, value=value)
+                set_radio_style(radio, background=SURFACE_ALT)
+                radio.pack(anchor="w", pady=(0, 4) if option_row < len(options) - 1 else 0)
+                self._editierbar.append(radio)
 
-        mode_box = ttk.Combobox(form, textvariable=self._mode_var,
-                                values=["manual", "auto"], width=10, state="readonly")
-        zeile("Modus:", mode_box)
+        add_radio_group("Ausführung", self._execution_var, [("Paper", "paper"), ("Live", "live")])
+        add_radio_group("Datenquelle", self._source_var, [("Mock", "mock"), ("Live", "live")], hint="Wie im CLI-Menü: mock oder live.")
+        add_radio_group("Modus", self._mode_var, [("Manual", "manual"), ("Auto", "auto")])
 
-        symbol_entry = tk.Entry(form, textvariable=self._symbol_var, width=16,
-                                bg=BG_ENTRY, fg=FG, insertbackground=FG, relief=tk.FLAT)
-        zeile("Symbol:", symbol_entry)
+        symbol_box = add_container("Symbol")
+        fixed_symbol = tk.Frame(symbol_box, bg=SURFACE_ALT, padx=10, pady=10)
+        style_card(fixed_symbol, background=SURFACE_ALT, border=BORDER)
+        fixed_symbol.pack(fill=tk.X)
+        tk.Label(fixed_symbol, text="BTC/USDT:USDT", bg=SURFACE_ALT, fg=TEXT, font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        tk.Label(fixed_symbol, text="Fest vorgegeben", bg=SURFACE_ALT, fg=TEXT_SOFT, font=("TkDefaultFont", 8)).pack(anchor="w", pady=(3, 0))
 
-        tf_spin = tk.Spinbox(form, textvariable=self._timeframe_var,
-                             from_=1, to=1440, increment=5, width=6,
-                             bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Timeframe:", tf_spin, "min")
+        add_input(
+            "Kapital (paper) USDT",
+            self._equity_var,
+            lambda parent, var: _entry(parent, var),
+        )
+        add_input(
+            "Risiko/Trade %",
+            self._risk_var,
+            lambda parent, var: _spinbox(parent, var, from_=0.1, to=1.0, increment=0.1, format="%.1f"),
+            hint="CLI-Limit: maximal 1 %.",
+        )
+        add_input(
+            "Min. CRV",
+            self._minrr_var,
+            lambda parent, var: _spinbox(parent, var, from_=1.0, to=10.0, increment=0.5, format="%.1f"),
+        )
+        add_input(
+            "Timeframe (min)",
+            self._timeframe_var,
+            lambda parent, var: _spinbox(parent, var, from_=5, to=1440, increment=5, format="%0.0f"),
+        )
+        add_input(
+            "Interval (sek)",
+            self._interval_var,
+            lambda parent, var: _spinbox(parent, var, from_=1, to=300, increment=1, format="%0.0f"),
+        )
+        add_input(
+            "Session-Ende UTC",
+            self._session_end_var,
+            lambda parent, var: _spinbox(parent, var, from_=0, to=23, increment=1, format="%0.0f"),
+        )
+        add_input(
+            "Signal-Timeout",
+            self._timeout_var,
+            lambda parent, var: _spinbox(parent, var, from_=5, to=300, increment=5, format="%0.0f"),
+        )
 
-        risk_spin = tk.Spinbox(form, textvariable=self._risk_var,
-                               from_=0.1, to=1.0, increment=0.1, width=6, format="%.1f",
-                               bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Risiko/Trade:", risk_spin, "%")
+        separator = tk.Frame(form, bg=BORDER, height=1)
+        separator.pack(fill=tk.X, pady=(4, 12))
 
-        rr_spin = tk.Spinbox(form, textvariable=self._minrr_var,
-                             from_=1.0, to=10.0, increment=0.5, width=6, format="%.1f",
-                             bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Min. CRV:", rr_spin)
+        tk.Label(form, text="BingX API", bg=SURFACE, fg=TEXT, font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
+        tk.Label(form, text="Nur für Live-Ausführung nötig.", bg=SURFACE, fg=TEXT_MUTED, font=("TkDefaultFont", 9)).pack(anchor="w", pady=(2, 8))
 
-        equity_entry = tk.Entry(form, textvariable=self._equity_var, width=10,
-                                bg=BG_ENTRY, fg=FG, insertbackground=FG, relief=tk.FLAT)
-        zeile("Startkapital:", equity_entry, "$")
-
-        interval_spin = tk.Spinbox(form, textvariable=self._interval_var,
-                                   from_=5, to=300, increment=5, width=6,
-                                   bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Loop-Intervall:", interval_spin, "sek")
-
-        session_spin = tk.Spinbox(form, textvariable=self._session_end_var,
-                                  from_=0, to=23, increment=1, width=4,
-                                  bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Session-Ende:", session_spin, "UTC")
-
-        loss_spin = tk.Spinbox(form, textvariable=self._daily_loss_var,
-                               from_=0.5, to=10.0, increment=0.5, width=6, format="%.1f",
-                               bg=BG_ENTRY, fg=FG, relief=tk.FLAT, buttonbackground=BG)
-        zeile("Tagesverlust max:", loss_spin, "%")
-
-        livefeed_check = tk.Checkbutton(form, variable=self._livefeed_var,
-                                        bg=BG, fg=FG, selectcolor=BG_ENTRY,
-                                        activebackground=BG, activeforeground=FG)
-        zeile("Live-Kursdaten:", livefeed_check)
-
-        # API-Schlüssel (verborgen)
-        ttk.Separator(form, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
-        tk.Label(form, text="BingX API (nur Live)", bg=BG, fg=FG_DIM,
-                 font=("monospace", 8, "italic")).pack(anchor="w")
-
-        apikey_entry = tk.Entry(form, textvariable=self._apikey_var, width=20,
-                                bg=BG_ENTRY, fg=FG, show="*", insertbackground=FG, relief=tk.FLAT)
-        zeile("API Key:", apikey_entry)
-
-        apisecret_entry = tk.Entry(form, textvariable=self._apisecret_var, width=20,
-                                   bg=BG_ENTRY, fg=FG, show="*", insertbackground=FG, relief=tk.FLAT)
-        zeile("API Secret:", apisecret_entry)
+        add_input("API Key", self._apikey_var, lambda parent, var: _entry(parent, var, show="*"))
+        add_input("API Secret", self._apisecret_var, lambda parent, var: _entry(parent, var, show="*"))
 
     def sperren(self, gesperrt: bool) -> None:
-        """Sperrt/entsperrt alle Eingabefelder während die Engine läuft."""
-        zustand = tk.DISABLED if gesperrt else tk.NORMAL
-        readonly = "disabled" if gesperrt else "readonly"
+        state = tk.DISABLED if gesperrt else tk.NORMAL
         for widget in self._editierbar:
-            if isinstance(widget, ttk.Combobox):
-                widget.config(state=readonly)
-            else:
-                widget.config(state=zustand)
+            widget.config(state=state)
 
     def lese_settings(self) -> Settings:
-        """Liest alle Felder aus und gibt ein neues Settings-Objekt zurück."""
-        ccxt_symbol = self._symbol_var.get().strip()
-        # Symbol ableiten: "BTC/USDT:USDT" → "BTC-USDT"
-        basis = ccxt_symbol.split("/")[0] if "/" in ccxt_symbol else ccxt_symbol
-        symbol = f"{basis}-USDT"
+        execution = self._execution_var.get()
+        live_feed = self._source_var.get() == "live"
+        interval = int(self._interval_var.get())
+        if live_feed and interval < 10:
+            interval = 30
 
         return Settings(
-            symbol=symbol,
-            ccxt_symbol=ccxt_symbol,
-            execution=self._execution_var.get(),  # type: ignore[arg-type]
+            symbol="BTC-USDT",
+            ccxt_symbol="BTC/USDT:USDT",
+            execution=execution,  # type: ignore[arg-type]
             mode=self._mode_var.get(),
-            timeframe_minutes=int(self._timeframe_var.get()),
+            timeframe_minutes=max(5, int(self._timeframe_var.get())),
             risk_per_trade=min(self._risk_var.get() / 100.0, 0.01),
             min_rr=self._minrr_var.get(),
             account_equity=self._equity_var.get(),
-            loop_interval_sec=int(self._interval_var.get()),
+            loop_interval_sec=interval,
             session_end_hour_utc=int(self._session_end_var.get()),
             daily_loss_limit_pct=self._daily_loss_var.get() / 100.0,
-            live_feed=self._livefeed_var.get(),
+            live_feed=live_feed,
+            manual_timeout_sec=int(self._timeout_var.get()),
             bingx_api_key=self._apikey_var.get() or None,
             bingx_api_secret=self._apisecret_var.get() or None,
         )
+
+
+def _entry(parent: tk.Widget, variable: tk.Variable, *, show: str | None = None) -> tk.Entry:
+    widget = tk.Entry(parent, textvariable=variable, show=show)
+    set_entry_style(widget)
+    return widget
+
+
+def _spinbox(parent: tk.Widget, variable: tk.Variable, **kwargs: object) -> tk.Spinbox:
+    widget = tk.Spinbox(parent, textvariable=variable, **kwargs)
+    set_entry_style(widget)
+    return widget

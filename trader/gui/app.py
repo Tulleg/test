@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from tkinter import ttk
 from tkinter import messagebox
 
 from trader.config import Settings
@@ -11,8 +12,31 @@ from trader.gui.controls import ControlsPanel
 from trader.gui.settings_panel import SettingsPanel
 from trader.gui.state import GUIState
 from trader.gui.status_panel import StatusPanel
+from trader.gui.theme import (
+    BORDER,
+    CARD_PAD,
+    DANGER,
+    DANGER_BG,
+    FONT_H1,
+    FONT_H2,
+    INFO,
+    INFO_BG,
+    OUTER_PAD,
+    SECTION_GAP,
+    SUCCESS,
+    SUCCESS_BG,
+    SURFACE,
+    SURFACE_ALT,
+    TEXT,
+    TEXT_MUTED,
+    WINDOW_BG,
+    configure_ttk_styles,
+    section_title,
+    set_button_style,
+    style_card,
+    tag_label,
+)
 
-BG = "#1e1e1e"
 POLL_INTERVALL_MS = 500  # Wie oft die GUI aktualisiert wird (Millisekunden)
 
 
@@ -40,55 +64,84 @@ class TradingApp(tk.Tk):
 
         # Fenster konfigurieren
         self.title("BingX BTC Trader")
-        self.configure(bg=BG)
-        self.geometry("1300x800")
-        self.minsize(900, 600)
+        self.configure(bg=WINDOW_BG)
+        self.geometry("1360x860")
+        self.minsize(1080, 680)
+        configure_ttk_styles(self)
 
         self._baue_layout()
         self._poll()  # startet den periodischen Update-Zyklus
 
     def _baue_layout(self) -> None:
-        """Erstellt das Zwei-Spalten-Layout."""
-        # Linke Spalte: Chart (nimmt den meisten Platz ein)
-        linke_spalte = tk.Frame(self, bg=BG)
+        """Erstellt Dashboard- und Settings-Tab."""
+        shell = tk.Frame(self, bg=WINDOW_BG, padx=OUTER_PAD, pady=OUTER_PAD)
+        shell.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(shell, bg=WINDOW_BG)
+        header.pack(fill=tk.X, pady=(0, SECTION_GAP))
+
+        brand = tk.Frame(header, bg=WINDOW_BG)
+        brand.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Label(brand, text="BingX BTC Trader", bg=WINDOW_BG, fg=TEXT, font=FONT_H1).pack(anchor="w")
+        tk.Label(
+            brand,
+            text="Modernisiertes Trading-Dashboard mit Live-Status, Chart und klarer Kontrollstruktur.",
+            bg=WINDOW_BG,
+            fg=TEXT_MUTED,
+            font=("TkDefaultFont", 10),
+        ).pack(anchor="w", pady=(4, 0))
+
+        header_badges = tk.Frame(header, bg=WINDOW_BG)
+        header_badges.pack(side=tk.RIGHT, anchor="n")
+        self._run_badge = tag_label(header_badges, "Bereit", fg=INFO, bg=INFO_BG)
+        self._run_badge.pack(anchor="e")
+        self._header_status = tk.Label(header_badges, text="Engine inaktiv", bg=WINDOW_BG, fg=TEXT_MUTED, font=("TkDefaultFont", 9))
+        self._header_status.pack(anchor="e", pady=(6, 0))
+
+        notebook = ttk.Notebook(shell, style="App.TNotebook")
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        dashboard_tab = tk.Frame(notebook, bg=WINDOW_BG)
+        settings_tab = tk.Frame(notebook, bg=WINDOW_BG)
+        notebook.add(dashboard_tab, text="Dashboard")
+        notebook.add(settings_tab, text="Einstellungen")
+
+        content = tk.Frame(dashboard_tab, bg=WINDOW_BG)
+        content.pack(fill=tk.BOTH, expand=True)
+
+        linke_spalte = tk.Frame(content, bg=WINDOW_BG)
         linke_spalte.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Titel-Leiste über dem Chart
-        titel = tk.Label(
-            linke_spalte,
-            text="BingX BTC Trader",
-            bg=BG,
-            fg="#4ac8ff",
-            font=("monospace", 12, "bold"),
-            pady=6,
-        )
-        titel.pack(fill=tk.X)
+        chart_card = tk.Frame(linke_spalte, bg=SURFACE, padx=CARD_PAD, pady=CARD_PAD)
+        style_card(chart_card)
+        chart_card.pack(fill=tk.BOTH, expand=True, padx=(0, SECTION_GAP))
 
-        self._chart = ChartPanel(linke_spalte, self._state)
-        self._chart.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        chart_head = section_title(chart_card, "Marktübersicht", "Candlesticks, Volumen und aktive Trade-Levels")
+        chart_head.pack(fill=tk.X, pady=(0, 12))
 
-        # Rechte Spalte: Settings + Status + Controls
-        rechte_spalte = tk.Frame(self, bg=BG, width=320)
+        self._chart = ChartPanel(chart_card, self._state)
+        self._chart.pack(fill=tk.BOTH, expand=True)
+
+        rechte_spalte = tk.Frame(content, bg=WINDOW_BG, width=440)
         rechte_spalte.pack(side=tk.RIGHT, fill=tk.Y)
-        rechte_spalte.pack_propagate(False)  # Breite festhalten
-
-        self._settings_panel = SettingsPanel(rechte_spalte, self._settings)
-        self._settings_panel.pack(fill=tk.X)
-
-        tk.Frame(rechte_spalte, bg="#333333", height=1).pack(fill=tk.X)  # Trennlinie
-
-        self._status_panel = StatusPanel(rechte_spalte)
-        self._status_panel.pack(fill=tk.BOTH, expand=True)
-
-        tk.Frame(rechte_spalte, bg="#333333", height=1).pack(fill=tk.X)  # Trennlinie
+        rechte_spalte.pack_propagate(False)
 
         self._controls = ControlsPanel(
             rechte_spalte,
             on_start=self._on_start,
             on_stop=self._on_stop,
             on_close_trade=self._on_close_trade,
+            on_quit=self._on_schliessen,
         )
-        self._controls.pack(fill=tk.X)
+        self._controls.pack(fill=tk.X, pady=(0, SECTION_GAP))
+
+        self._status_panel = StatusPanel(rechte_spalte)
+        self._status_panel.pack(fill=tk.BOTH, expand=True)
+
+        settings_shell = tk.Frame(settings_tab, bg=WINDOW_BG, padx=2, pady=2)
+        settings_shell.pack(fill=tk.BOTH, expand=True)
+        self._settings_panel = SettingsPanel(settings_shell, self._settings)
+        self._settings_panel.pack(fill=tk.X, anchor="n")
 
         # Fenster-Schließen-Event abfangen
         self.protocol("WM_DELETE_WINDOW", self._on_schliessen)
@@ -121,6 +174,7 @@ class TradingApp(tk.Tk):
         self._status_panel.update(snap)
         self._controls.setze_engine_laeuft(snap["running"])
         self._controls.setze_trade_offen(snap["open_trade"] is not None)
+        self._setze_header_status(snap)
 
         # Manuelles Signal zur Bestätigung?
         if snap["pending_signal"] and not self._signal_dialog_offen:
@@ -169,47 +223,77 @@ class TradingApp(tk.Tk):
         """Sendet Schließ-Kommando für die offene Position an die Engine."""
         self._state.command_queue.put("close_trade")
 
+    def _setze_header_status(self, snap: dict) -> None:
+        running = snap["running"]
+        pnl = snap["day_pnl"]
+        badge_text = "Aktiv" if running else "Bereit"
+        badge_fg = SUCCESS if running else INFO
+        badge_bg = SUCCESS_BG if running else INFO_BG
+        self._run_badge.config(text=badge_text, fg=badge_fg, bg=badge_bg)
+        status_text = snap["status_msg"] or ("Engine aktiv" if running else "Engine inaktiv")
+        if pnl < 0:
+            status_text = f"{status_text}  |  Tag {pnl:.2f} $"
+        elif pnl > 0:
+            status_text = f"{status_text}  |  Tag +{pnl:.2f} $"
+        self._header_status.config(text=status_text)
+
     def _zeige_signal_dialog(self, signal: dict) -> None:
         """Öffnet einen modalen Dialog zur manuellen Signal-Bestätigung."""
         self._signal_dialog_offen = True
 
         dlg = tk.Toplevel(self)
         dlg.title("Neues Trading-Signal")
-        dlg.configure(bg="#1e1e1e")
+        dlg.configure(bg=WINDOW_BG)
         dlg.resizable(False, False)
         dlg.grab_set()  # Modal: blockiert das Hauptfenster
 
         # Richtungsanzeige
         ist_long = signal["direction"] == "long"
         pfeil = "▲ LONG" if ist_long else "▼ SHORT"
-        farbe = "#44dd44" if ist_long else "#ff4444"
+        farbe = SUCCESS if ist_long else DANGER
+        hintergrund = SUCCESS_BG if ist_long else DANGER_BG
 
-        tk.Label(dlg, text=pfeil, bg="#1e1e1e", fg=farbe,
-                 font=("monospace", 18, "bold"), pady=10).pack()
+        shell = tk.Frame(dlg, bg=WINDOW_BG, padx=OUTER_PAD, pady=OUTER_PAD)
+        shell.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(dlg, text=f"Setup: {signal.get('setup', '-')}", bg="#1e1e1e", fg="#cccccc",
-                 font=("monospace", 10)).pack()
+        card = tk.Frame(shell, bg=SURFACE, padx=CARD_PAD, pady=CARD_PAD)
+        style_card(card)
+        card.pack(fill=tk.BOTH, expand=True)
 
-        # Preis-Details
-        details = tk.Frame(dlg, bg="#252525", padx=16, pady=10)
-        details.pack(fill=tk.X, padx=16, pady=8)
+        top = tk.Frame(card, bg=SURFACE)
+        top.pack(fill=tk.X)
+        tag_label(top, pfeil, fg=farbe, bg=hintergrund).pack(anchor="w")
+        tk.Label(card, text="Neues Trading-Signal", bg=SURFACE, fg=TEXT, font=FONT_H2).pack(anchor="w", pady=(12, 4))
+        tk.Label(
+            card,
+            text=f"Setup: {signal.get('setup', '-')}",
+            bg=SURFACE,
+            fg=TEXT_MUTED,
+            font=("TkDefaultFont", 10),
+        ).pack(anchor="w")
+
+        ttk.Separator(card, orient=tk.HORIZONTAL, style="App.Horizontal.TSeparator").pack(fill=tk.X, pady=14)
+
+        details = tk.Frame(card, bg=SURFACE_ALT, padx=16, pady=12)
+        style_card(details, background=SURFACE_ALT, border=BORDER)
+        details.pack(fill=tk.X)
 
         def detail_zeile(bezeichnung: str, wert: str, wert_farbe: str = "#cccccc") -> None:
-            zeile = tk.Frame(details, bg="#252525")
-            zeile.pack(fill=tk.X, pady=2)
-            tk.Label(zeile, text=bezeichnung, bg="#252525", fg="#888888",
-                     font=("monospace", 9), width=12, anchor="w").pack(side=tk.LEFT)
-            tk.Label(zeile, text=wert, bg="#252525", fg=wert_farbe,
-                     font=("monospace", 9, "bold")).pack(side=tk.LEFT)
+            zeile = tk.Frame(details, bg=SURFACE_ALT)
+            zeile.pack(fill=tk.X, pady=3)
+            tk.Label(zeile, text=bezeichnung, bg=SURFACE_ALT, fg=TEXT_MUTED,
+                     font=("TkDefaultFont", 9), width=12, anchor="w").pack(side=tk.LEFT)
+            tk.Label(zeile, text=wert, bg=SURFACE_ALT, fg=wert_farbe,
+                     font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT)
 
         detail_zeile("Entry:", f"{signal.get('entry', 0):.2f}")
-        detail_zeile("Stop Loss:", f"{signal.get('stop', 0):.2f}", "#ff4444")
-        detail_zeile("Take Profit:", f"{signal.get('target', 0):.2f}", "#44dd44")
-        detail_zeile("CRV:", f"{signal.get('rr', 0):.2f}")
+        detail_zeile("Stop Loss:", f"{signal.get('stop', 0):.2f}", DANGER)
+        detail_zeile("Take Profit:", f"{signal.get('target', 0):.2f}", SUCCESS)
+        detail_zeile("CRV:", f"{signal.get('rr', 0):.2f}", TEXT)
 
         # Buttons
-        btn_frame = tk.Frame(dlg, bg="#1e1e1e", pady=8)
-        btn_frame.pack()
+        btn_frame = tk.Frame(card, bg=SURFACE, pady=4)
+        btn_frame.pack(fill=tk.X, pady=(16, 0))
 
         def bestaetigen() -> None:
             self._state.signal_response.put("confirm")
@@ -221,15 +305,13 @@ class TradingApp(tk.Tk):
             self._signal_dialog_offen = False
             dlg.destroy()
 
-        tk.Button(btn_frame, text="✓  Bestätigen", command=bestaetigen,
-                  bg="#1a5c1a", fg="#44dd44", activebackground="#2a7a2a",
-                  font=("monospace", 10, "bold"), relief=tk.FLAT,
-                  padx=14, pady=7, cursor="hand2").pack(side=tk.LEFT, padx=6)
+        confirm = tk.Button(btn_frame, text="Signal bestätigen", command=bestaetigen)
+        set_button_style(confirm, variant="primary")
+        confirm.pack(side=tk.LEFT)
 
-        tk.Button(btn_frame, text="✕  Ablehnen", command=ablehnen,
-                  bg="#3a1a1a", fg="#ff6666", activebackground="#5a2a2a",
-                  font=("monospace", 10, "bold"), relief=tk.FLAT,
-                  padx=14, pady=7, cursor="hand2").pack(side=tk.LEFT, padx=6)
+        reject = tk.Button(btn_frame, text="Ablehnen", command=ablehnen)
+        set_button_style(reject, variant="danger")
+        reject.pack(side=tk.LEFT, padx=(10, 0))
 
         # Fenster-Schließen = Ablehnen
         dlg.protocol("WM_DELETE_WINDOW", ablehnen)
